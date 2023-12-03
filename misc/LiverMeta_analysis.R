@@ -14,6 +14,17 @@ sobj_meta1 <- Load10X_Spatial(
   data.dir = "GSE206552_RAW/GSM6256810_meta1",
   filename = "filtered_feature_bc_matrix.h5"
 )
+View(sobj_meta1@meta.data)
+
+sobj_meta1_raw <- Load10X_Spatial(
+  data.dir = "GSE206552_RAW/GSM6256810_meta1",
+  filename = "raw_feature_bc_matrix.h5"
+)
+View(sobj_meta1_raw@meta.data)
+
+# No annotations...
+
+
 sobj_meta2 <- Load10X_Spatial(
   data.dir = "GSE206552_RAW/GSM6256811_meta2",
   filename = "filtered_feature_bc_matrix.h5"
@@ -35,3 +46,5 @@ m4_nct <- SpatialFeaturePlot(sobj_meta4, features = "nCount_Spatial")
 
 pw_nct <- (m1_nct | m2_nct) / (m3_nct | m4_nct)
 pw_nct
+
+
