@@ -78,12 +78,12 @@ make_sobj <- function(sample, force = FALSE){
   )
 }
 
-mclapply(
-  samples,
-  make_sobj,
-  force = TRUE,
-  mc.cores = cores
-)
+# mclapply(
+#   samples,
+#   make_sobj,
+#   force = TRUE,
+#   mc.cores = cores
+# )
 
 # Getter
 get_sobj <- function(sample, GEO = FALSE){
@@ -198,7 +198,7 @@ sobj <- sobj_SCT
 assay = "Spatial"
 DefaultAssay(sobj) <- assay
 RNA_nPCs = 33
-resolution = 0.5
+resolution = 0.6
 set.seed(0) # from GH code
 sobj <- sobj %>%
   NormalizeData(normalization.method = "LogNormalize") %>%
@@ -216,7 +216,7 @@ sobj <- sobj %>%
     reduction.key = paste0(assay, "UMAP_"),
     assay = assay
   )
-sobj[["Spatial_cluster"]] <- Idents(sobj)
+sobj[["Spatial_cluster"]] <- sobj@meta.data$seurat_clusters
 # https://github.com/kwells4/visium_ovarian_cancer/blob/main/src/scripts/D_GTFB1170_SmallCellOvarianCancer/02_PCA_UMAP.R
 ## SCT assay ----
 assay = "SCTrr"
@@ -236,10 +236,17 @@ sobj <- sobj %>%
     reduction.key = paste0(assay, "UMAP_"),
     assay = assay
   )
-sobj[["SCTrr_cluster"]] <- Idents(sobj)
+sobj[["SCTrr_cluster"]] <- sobj@meta.data$seurat_clusters
+### Overwrite RDS ----
+saveRDS(
+  object = sobj,
+  file = "GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/sobj.rds"
+)
+View(sobj@meta.data)
+sobj <- get_sobj("D_GTFB1170_SmallCellOvarianCancer")
 
 ## SpatialPCA ----
-# Linux paths
+# START LINUX
 sobj_GEO <- readRDS("~/data/sobj_GEO.rds")
 n_cores <- ceiling(parallel::detectCores()/2)
 # BiocManager::install("xzhoulab/SPARK")
@@ -343,22 +350,245 @@ Rubrary::rwrite(
   SPCA_obj_genelist_SPCs_df,
   "~/data/SPCA_obj_genelist_SPCs_df.txt"
 )
+# END LINUX
 
-# Overwrite RDS ----
-saveRDS(
-  object = sobj,
-  file = "GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/sobj.rds"
+### Incorporate into sobj ----
+sobj_spca <- sobj
+# spcaspark
+SPCA_cts_spark <- Rubrary::rread(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/SpatialPCA/SPCA_obj_cts.txt",
+  row.names = 1
 )
-sobj <- get_sobj("D_GTFB1170_SmallCellOvarianCancer")
+colnames(SPCA_cts_spark) <- sub("\\.", "-", colnames(SPCA_cts_spark))
+SPCA_ctsnorm_spark <- Rubrary::rread(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/SpatialPCA/SPCA_obj_cts_normexpr.txt",
+  row.names = 1
+)
+colnames(SPCA_ctsnorm_spark) <- sub("\\.", "-", colnames(SPCA_ctsnorm_spark))
+sobj_spca@assays[["spcaspark"]] <- CreateAssayObject(
+  # counts = SPCA_cts_spark,
+  data = as.matrix(SPCA_ctsnorm_spark),
+  key = "spcaspark_"
+)
+# spcacustom
+SPCA_cts_custom <- Rubrary::rread(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/SpatialPCA/SPCA_obj_genelist_cts.txt",
+  row.names = 1
+)
+colnames(SPCA_cts_custom) <- sub("\\.", "-", colnames(SPCA_cts_custom))
+SPCA_ctsnorm_custom <- Rubrary::rread(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/SpatialPCA/SPCA_obj_genelist_cts_normexpr.txt",
+  row.names = 1
+)
+colnames(SPCA_ctsnorm_custom) <- sub("\\.", "-", colnames(SPCA_ctsnorm_custom))
+sobj_spca@assays[["spcacustom"]] <- CreateAssayObject(
+  # counts = SPCA_cts_custom,
+  data = as.matrix(SPCA_ctsnorm_custom),
+  key = "spcacustom_"
+)
+
+# Variable genes found via SPARK
+SPCA_SPCs_spark <- Rubrary::rread(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/SpatialPCA/SPCA_obj_SPCs_df.txt",
+  row.names = 1
+) %>%
+  `colnames<-`(paste0("SpPC", 1:20)) %>%
+  as.matrix()
+sobj_spca[["spcasparkpca"]] <- CreateDimReducObject(
+  embeddings = SPCA_SPCs_spark,
+  key = "spcasparkpca_",
+  assay = "spcaspark"
+)
+# Variable genes found via custom genelist / Seurat FindVariableFeatures
+SPCA_SPCs_custom <- Rubrary::rread(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/SpatialPCA/SPCA_obj_genelist_SPCs_df.txt",
+  row.names = 1
+) %>%
+  `colnames<-`(paste0("SpPC", 1:20)) %>%
+  as.matrix()
+sobj_spca[["spcacustompca"]] <- CreateDimReducObject(
+  embeddings = SPCA_SPCs_custom,
+  key = "spcacustompca_",
+  assay = "spcacustom"
+)
+
+#### Louvain (re)clustering ----
+Reductions(sobj_spca)
+# spcaspark
+DefaultAssay(sobj_spca) <- "spcaspark"
+sobj_spca <- sobj_spca %>%
+  FindNeighbors(
+    reduction = "spcasparkpca",
+    assay = "spcaspark",
+    dims = 1:20) %>%
+  FindClusters(resolution = 0.8) %>%
+  RunUMAP(
+    metric = "correlation",
+    dims = 1:20,
+    reduction = "spcasparkpca",
+    reduction.name = "spcasparkumap",
+    reduction.key = "spcasparkUMAP_",
+    assay = "spcaspark"
+  )
+# View(sobj_spca@meta.data)
+# Idents(sobj_spca)
+sobj_spca[["spcaspark_clusters"]] <- sobj_spca@meta.data$seurat_clusters
+names(sobj_spca@meta.data)
+Reductions(sobj_spca)
+DimPlot(
+  sobj_spca, reduction = "spcasparkpca",
+  group.by = "spcaspark_clusters"
+)
+DimPlot(
+  sobj_spca, reduction = "spcasparkumap",
+  group.by = "spcaspark_clusters"
+)
+SpatialPlot(
+  sobj_spca, group.by = "spcaspark_clusters"
+)
+# spcacustom
+DefaultAssay(sobj_spca) <- "spcacustom"
+sobj_spca <- sobj_spca %>%
+  FindNeighbors(
+    reduction = "spcacustompca",
+    assay = "spcacustom",
+    dims = 1:20) %>%
+  FindClusters(resolution = 0.8) %>%
+  RunUMAP(
+    metric = "correlation",
+    dims = 1:20,
+    reduction = "spcacustompca",
+    reduction.name = "spcacustomumap",
+    reduction.key = "spcacustomUMAP_",
+    assay = "spcacustom"
+  )
+# View(sobj_spca@meta.data)
+# Idents(sobj_spca)
+sobj_spca[["spcacustom_clusters"]] <- sobj_spca@meta.data$seurat_clusters
+names(sobj_spca@meta.data)
+Reductions(sobj_spca)
+
 
 # Visualization ----
-# View(sobj@meta.data)
-SpatialDimPlot(
-  sobj, group.by = "SCTrr_cluster",
-  label = TRUE, label.size = 3)
+## PCA dimplot ----
+Reductions(sobj_spca)
+plt_SpatialPCA <- DimPlot(
+  sobj_spca, reduction = "pca", group.by = "Spatial_cluster") +
+  labs(title = "Spatial PCA") +
+  theme(legend.position = "bottom")
+plt_SCTrrPCA <- DimPlot(
+  sobj_spca, reduction = "sctpca", group.by = "SCTrr_cluster") +
+  labs(title = "SCT PCA (Rerun)") +
+  theme(legend.position = "bottom")
+plt_SPCAsparkPCA <- DimPlot(
+  sobj_spca, reduction = "spcasparkpca", group.by = "spcaspark_clusters") +
+  labs(title = "Spatial PCA (SPARK Genes)") +
+  theme(legend.position = "bottom")
+plt_SPCAcustomPCA <- DimPlot(
+  sobj_spca, reduction = "spcacustompca", group.by = "spcacustom_clusters") +
+  labs(title = "Spatial PCA (Seurat Variable Genes)") +
+  theme(legend.position = "bottom")
 
-## Spatial plot ----
-# SCT reclustering largely similar
+# Patchworks
+pw_PCA <- (plt_SpatialPCA | plt_SCTrrPCA | plt_SPCAsparkPCA | plt_SPCAcustomPCA) +
+  plot_annotation(title = paste0(sample, " PCA"))
+ggsave(
+  plot = pw_PCA,
+  filename = paste0("plots/DimPlotPCA_", sample,"_pw_spatial_sct_spcaspark_spcacustom.png"),
+  width = 20, height = 7
+)
+## UMAP dimplot ----
+Reductions(sobj_spca)
+plt_SpatialUMAP <- DimPlot(
+  sobj_spca, reduction = "umap", group.by = "Spatial_cluster") +
+  labs(title = "Spatial UMAP") +
+  theme(legend.position = "bottom")
+plt_SCTrrUMAP <- DimPlot(
+  sobj_spca, reduction = "sctumap", group.by = "SCTrr_cluster") +
+  labs(title = "SCT UMAP (Rerun)") +
+  theme(legend.position = "bottom")
+plt_SPCAsparkUMAP <- DimPlot(
+  sobj_spca, reduction = "spcasparkumap", group.by = "spcaspark_clusters") +
+  labs(title = "Spatial UMAP (SPARK Genes)") +
+  theme(legend.position = "bottom")
+plt_SPCAcustomUMAP <- DimPlot(
+  sobj_spca, reduction = "spcacustomumap", group.by = "spcacustom_clusters") +
+  labs(title = "Spatial UMAP (Seurat Variable Genes)") +
+  theme(legend.position = "bottom")
+# Patchworks
+pw_UMAP <- (plt_SpatialUMAP | plt_SCTrrUMAP | plt_SPCAsparkUMAP | plt_SPCAcustomUMAP) +
+  plot_annotation(title = paste0(sample, " UMAP"))
+ggsave(
+  plot = pw_UMAP,
+  filename = paste0("plots/DimPlotUMAP_", sample,"_pw_spatial_sct_spcaspark_spcacustom.png"),
+  width = 20, height = 7
+)
+
+## PCA + UMAP PW ----
+pw_PCAUMAP <- pw_PCA / pw_UMAP
+ggsave(
+  plot = pw_PCAUMAP,
+  filename = paste0("plots/DimPlotPCAUMAP_", sample,"_pw_spatial_sct_spcaspark_spcacustom.png"),
+  width = 20, height = 12
+)
+
+## Clustering spatial plot ----
+names(sobj_spca@meta.data)
+plt_SpatialCl <- SpatialDimPlot(
+  sobj, group.by = "Spatial_cluster",
+  label = TRUE, label.size = 3) +
+  labs(
+    title = "Spatial Cluster"
+  )
+plt_SCTrrCl <- SpatialDimPlot(
+  sobj, group.by = "SCTrr_cluster",
+  label = TRUE, label.size = 3) +
+  labs(title = "SCT Cluster (Rerun)") +
+  theme(legend.position = "bottom")
+plt_SPCAspark <- SpatialDimPlot(
+  sobj_spca, group.by = "spcaspark_clusters",
+  label = FALSE, label.size = 3) +
+  labs(title = "Spatial PCA Cluster (SPARK Genes)") +
+  theme(legend.position = "bottom")
+plt_SPCAcustom <- SpatialDimPlot(
+  sobj_spca, group.by = "spcacustom_clusters",
+  label = FALSE, label.size = 3) +
+  labs(title = "Spatial PCA Cluster (Seurat Variable Genes)") +
+  theme(legend.position = "bottom")
+
+### Save ----
+# Individual
+ggsave(
+  plot = plt_SCTrrCl,
+  filename = paste0("plots/SpatialDimPlot_", sample,"_clusters_sctrr.png"),
+  width = 6, height = 6
+)
+
+# Patchworks
+pw_Spatial <- (plt_SpatialCl + plt_SCTrrCl) / (plt_SPCAspark + plt_SPCAcustom) +
+  plot_annotation(title = paste0(sample, " Spatial Clustering"))
+ggsave(
+  plot = pw_Spatial,
+  filename = paste0("plots/SpatialDimPlot_", sample,"_pw_clusters_spatial_sct_spatialpca.png"),
+  width = 15, height = 15
+)
+
+pw2_Spatial <- (plt_SCTrrCl + plt_SPCAspark + plt_SPCAcustom) +
+  plot_annotation(title = paste0(sample, " Spatial Clustering"))
+ggsave(
+  plot = pw2_Spatial,
+  filename = paste0("plots/SpatialDimPlot_", sample,"_pw_clusters_sctrr_spcaspark_spcacustom.png"),
+  width = 15, height = 8
+)
+
+pw_spca <- plt_SPCAspark + plt_SPCAcustom +
+  plot_annotation(title = paste0(sample, " Spatial PCA Clustering"))
+ggsave(
+  plot = pw_spca,
+  filename = paste0("plots/SpatialDimPlot_", sample,"_pw_clusters_spcaspark_spcacustom.png"),
+  width = 12, height = 6
+)
+
 plt_SCTcl <- SpatialDimPlot(
   sobj, group.by = "SCT_cluster",
   label = TRUE, label.size = 3) +
@@ -374,25 +604,13 @@ plt_SCTrrcl <- SpatialDimPlot(
 
 plt_SCTcl + plt_SCTrrcl
 
-## UMAP ----
-Reductions(sobj)
-DimPlot(
-  sobj, group.by = "SCT_cluster"
+sample <- samples[8]
+sample
+ggsave(
+  plot = plt_SCTrrcl,
+  filename = paste0("plots/SpatialDimPlot_", sample, "_SCTrrcl.png"),
+  width = 8, height = 6
 )
-
-# Plot UMAP
-sobj@meta.data$SCT_cluster <- factor(
-  sobj@meta.data$SCT_cluster,
-  levels = sort(unique(sobj@meta.data$SCT_cluster))
-)
-ggplot(
-  sobj@meta.data,
-  aes(x = UMAP_1, y = UMAP_2, color = SCT_cluster)
-) +
-  geom_point() +
-  theme_classic()
-
-DimPlot(sobj)
 
 # SingleR ----
 # https://bioconductor.org/packages/release/bioc/vignettes/SingleR/inst/doc/SingleR.html
