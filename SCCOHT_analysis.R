@@ -237,16 +237,114 @@ sobj <- sobj %>%
     assay = assay
   )
 sobj[["SCTrr_cluster"]] <- Idents(sobj)
-## SpatialPCA ----
-library(SpatialPCA)
-devtools::install_github("xzhoulab/SPARK")
-devtools::install_github('xzhoulab/SPARK')
-BiocManager::install("shangll123/SpatialPCA")
-install.packages(
-  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SpatialPCA-1.3.0.tar.gz",
-  type = "source")
 
-# Overwrite RDS
+## SpatialPCA ----
+# Linux paths
+sobj_GEO <- readRDS("~/data/sobj_GEO.rds")
+n_cores <- ceiling(parallel::detectCores()/2)
+# BiocManager::install("xzhoulab/SPARK")
+# BiocManager::install("shangll123/SpatialPCA")
+library(Seurat)
+library(SpatialPCA)
+library(dplyr)
+sobj_GEO <- sobj_GEO %>%
+  NormalizeData(normalization.method = "LogNormalize") %>%
+  FindVariableFeatures() # nfeatures = 2000
+
+cts <- sobj_GEO@assays$Spatial$counts
+# View(sobj_GEO@meta.data)
+loc <- sobj_GEO@meta.data %>%
+  select(row, col) %>%
+  as.matrix()
+
+### Create initial objects ----
+SPCA_obj <- SpatialPCA::CreateSpatialPCAObject(
+  counts = cts,
+  location = loc,
+  project = Project(sobj_GEO),
+  gene.type = "spatial",
+  numCores_spark = n_cores
+)
+saveRDS(
+  SPCA_obj,
+  file = "~/data/SPCA_obj.rds"
+)
+
+SPCA_obj_genelist <- SpatialPCA::CreateSpatialPCAObject(
+  counts = cts,
+  location = loc,
+  project = Project(sobj_GEO),
+  numCores_spark = n_cores,
+  gene.type = "custom",
+  customGenelist = VariableFeatures(sobj_GEO)
+)
+saveRDS(
+  SPCA_obj_genelist,
+  file = "~/data/SPCA_obj_genelist.rds"
+)
+
+SPCA_obj <- readRDS("~/data/SPCA_obj.rds")
+SPCA_obj_genelist <- readRDS("~/data/SPCA_obj_genelist.rds")
+
+### Estimate spatial PCs ----
+SPCA_obj_SPCs <- SPCA_obj %>%
+  SpatialPCA_buildKernel( # Defaults, for smaller datasets
+    kerneltype = "gaussian",
+    bandwidthtype = "SJ",
+    bandwidth.set.by.user = NULL,
+    sparseKernel = TRUE,
+    sparseKernel_tol = 1e-20,
+    sparseKernel_ncore = n_cores) %>%
+  SpatialPCA_EstimateLoading(
+    maxiter = 300,
+    initial_tau = 1,
+    fast = TRUE,
+    SpatialPCnum = 20) %>%
+  SpatialPCA_SpatialPCs(fast = TRUE)
+saveRDS(
+  SPCA_obj_SPCs,
+  file = "~/data/SPCA_obj_SPCs.rds"
+)
+
+SPCA_obj_genelist_SPCs <- SPCA_obj_genelist %>%
+  SpatialPCA_buildKernel( # Defaults, for smaller datasets
+    kerneltype = "gaussian",
+    bandwidthtype = "SJ",
+    bandwidth.set.by.user = NULL,
+    sparseKernel = TRUE,
+    sparseKernel_tol = 1e-20,
+    sparseKernel_ncore = n_cores) %>%
+  SpatialPCA_EstimateLoading(
+    maxiter = 300,
+    initial_tau = 1,
+    fast = TRUE,
+    SpatialPCnum = 20) %>%
+  SpatialPCA_SpatialPCs(fast = TRUE)
+saveRDS(
+  SPCA_obj_genelist_SPCs,
+  file = "~/data/SPCA_obj_genelist_SPCs.rds"
+)
+
+### Write SPCs to text file ----
+SPCA_obj_SPCs_df <- SPCA_obj_SPCs@SpatialPCs %>%
+  t() %>%
+  as.data.frame() %>%
+  `rownames<-`(SPCA_obj_SPCs@counts@Dimnames[[2]])
+Rubrary::rwrite(
+  SPCA_obj_SPCs_df,
+  "~/data/SPCA_obj_SPCs_df.txt"
+)
+
+SPCA_obj_genelist_SPCs_df <- SPCA_obj_genelist_SPCs@SpatialPCs %>%
+  t() %>%
+  as.data.frame() %>%
+  `rownames<-`(SPCA_obj_genelist_SPCs@counts@Dimnames[[2]])
+Rubrary::rwrite(
+  SPCA_obj_genelist_SPCs_df,
+  "~/data/SPCA_obj_genelist_SPCs_df.txt"
+)
+
+# Overwrite RDS ----
 saveRDS(
   object = sobj,
   file = "GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/sobj.rds"
@@ -307,8 +405,13 @@ library(BiocParallel)
 hpca.se <- celldex::HumanPrimaryCellAtlasData()
 # Get numeric log-expression normalized df
 library(scRNAseq)
-sce <- Seurat::as.SingleCellExperiment(sobj, assay = "Spatial")
-colLabels(sce) <- colData(sce)$SCTrr_cluster
+smp <- samples[8]
+sobj_SR <- get_sobj(smp)
+sobj_SR[["barcode"]] <- rownames(sobj_SR@meta.data)
+View(sobj_SR@meta.data)
+rns <- rownames(sobj_SR)
+sce <- Seurat::as.SingleCellExperiment(sobj_SR, assay = "Spatial")
+scater::plotUMAP(sce, color_by = "SCTrr_cluster")
 # Per cell annotation
 cellanno <- SingleR::SingleR(
   test = sce,
@@ -316,33 +419,61 @@ cellanno <- SingleR::SingleR(
   labels = hpca.se$label.main,
   BPPARAM = MulticoreParam()
 )
-sobj[["cellanno"]] <- cellanno$labels
-# Cluster level annotation
-# https://bioconductor.org/books/devel/SingleRBook/advanced-options.html#cluster-level-annotation
-cellanno_cl <- SingleR::SingleR(
+saveRDS(
+  cellanno,
+  file = "GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/cellanno_SR_percell.rds"
+)
+sobj_SR[["cellanno"]] <- cellanno$labels
+sobj_SR[["cellanno_pruned"]] <- cellanno$pruned.labels
+View(sobj_SR@meta.data)
+
+cellanno <- SingleR::SingleR(
   test = sce,
   ref = hpca.se,
   labels = hpca.se$label.main,
-  clusters = colData(sce)$SCTrr_cluster,
   BPPARAM = MulticoreParam()
 )
-colData(sce)$SCTrr_cluster
-sobj[["cellanno_cl"]] <- cellanno_cl$labels
-View(sobj@meta.data)
+# Cluster level annotation
+# https://bioconductor.org/books/devel/SingleRBook/advanced-options.html#cluster-level-annotation
+colLabels(sce) <- colData(sce)$SCTrr_cluster
+cellanno_cl <- SingleR::SingleR(
+  test = sce,
+  ref = hpca.se,
+  clusters = colLabels(sce),
+  labels = hpca.se$label.main,
+  # BPPARAM = MulticoreParam()
+) 
 
-sobj <- de
+saveRDS(
+  cellanno_cl,
+  file = "GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/cellanno_SR_perSCTrrcluster.rds"
+)
+
+cellanno_cl_df <- cellanno_cl %>%
+  as.data.frame() %>%
+  select(labels, delta.next, pruned.labels) %>%
+  `colnames<-`(c("cellanno_cl", "cellanno_cl_deltanext", "cellanno_cl_pruned")) %>%
+  tibble::rownames_to_column("SCTrr_cluster")
+# Add to metadata
+sobj_SR@meta.data <- sobj_SR@meta.data %>%
+  left_join(cellanno_cl_df, by = "SCTrr_cluster")
+rownames(sobj_SR@meta.data) <- sobj_SR$barcode
+View(sobj_SR@meta.data)
+
 plt_spatial_ca <- SpatialPlot(
-  sobj, group.by = "cellanno_cl",
+  sobj_SR, group.by = "cellanno_cl",
 )
 plt_spatial_ca
-Reductions(sobj)
+Reductions(sobj_SR)
 plt_umap_SCTrrcl <- DimPlot(
-  sobj, group.by = "SCTrr_cluster",
+  sobj_SR, group.by = "SCTrr_cluster",
   reduction = "umap"
 )
 plt_umap_SCTrrcl
 plt_umap_ca <- DimPlot(
-  sobj, group.by = "cellanno_cl",
+  sobj_SR, group.by = "cellanno_cl",
   reduction = "umap"
 )
 plt_umap_ca
+
+plt_spatial_ca + plt_umap_ca
