@@ -18,7 +18,7 @@ library(patchwork)
 
 # Load samples ----
 dir_data <- "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SCCOHT/GSE213699_mod/"
-samples <- list.files(dir_data)
+samples <- list.files(dir_data)[grepl("^[A-D]_", list.files(dir_data))]
 
 # Run once to generate "raw" data loaded straight from GEO
 make_sobj <- function(sample, force = FALSE){
@@ -52,7 +52,9 @@ make_sobj <- function(sample, force = FALSE){
   metadata <- Rubrary::rread(paste0(dir_data, sample, "/metadata.csv"), row.names = 1, make.names = FALSE)
   umap <- Rubrary::rread(paste0(dir_data, sample, "/umap_coords.csv"), row.names = 1, make.names = FALSE)
   # Read in & define image variables
-  img <- Read10X_Image(image.dir = paste0(dir_data, sample, "/spatial/"))
+  img <- Read10X_Image(
+    image.dir = paste0(dir_data, sample, "/spatial/"),
+    filter.matrix = TRUE)
   img@assay <- "Spatial"
   img@key <- "slice1_"
   # Create sobj from filtered_feature_bc_matrix
@@ -60,13 +62,14 @@ make_sobj <- function(sample, force = FALSE){
     data.dir = paste0(dir_data, sample),
     filename = "filtered_feature_bc_matrix.h5",
     assay = "Spatial",
+    filter.matrix = TRUE,
     slice = "slice1"
   ) %>% # Add metadata + umap coords from Sanders et al.
     AddMetaData(metadata) %>%
     AddMetaData(umap)
   sobj@images$slice1 <- img # Patch in img
   # Add Sanders SCT transformed data
-  sobj@assays[["SCT"]] <- CreateAssayObject(counts = cts_SCT) 
+  sobj@assays[["SCT"]] <- CreateAssayObject(counts = cts_SCT, key = "sct_") 
   Project(sobj) <- sample # Rename project
   Idents(sobj) <- Project(sobj) # Set ident
   saveRDS(
@@ -75,12 +78,12 @@ make_sobj <- function(sample, force = FALSE){
   )
 }
 
-# mclapply(
-#   samples,
-#   make_sobj,
-#   force = TRUE,
-#   mc.cores = cores
-# )
+mclapply(
+  samples,
+  make_sobj,
+  force = TRUE,
+  mc.cores = cores
+)
 
 # Getter
 get_sobj <- function(sample, GEO = FALSE){
@@ -92,15 +95,22 @@ get_sobj <- function(sample, GEO = FALSE){
   return(readRDS(path))
 }
 
-# Retrieve all GEO sobjs as list
-sobj_GEO_list <- lapply(
-  samples,
-  get_sobj,
-  GEO = TRUE
-)
-names(sobj_GEO_list) <- samples
+# Retrieve all GEO sobjs as list ----
+# sobj_GEO_list <- lapply(
+#   samples,
+#   get_sobj,
+#   GEO = TRUE
+# )
+# names(sobj_GEO_list) <- samples
+# saveRDS(
+#   object = sobj_GEO_list,
+#   file = paste0(dir_data, "/sobj_GEO_list.rds")
+# )
 
-# function to spit out preliminary nCount_Spatial + nFeature_Spatial spatial tissue plots
+sobj_GEO_list <- readRDS(paste0(dir_data, "/sobj_GEO_list.rds"))
+
+# Preliminary plots ----
+# function to spit out nCount_Spatial + nFeature_Spatial spatial tissue plots
 plot_SpatialPlot <- function(
     sobj, feats, assay = "SCT", savename = NULL, width = 12, height = 6){
   DefaultAssay(sobj) <- assay
@@ -132,7 +142,7 @@ plot_SpatialPlot(
     Project(sobj_GEO_list$A_955_OvarianTumor), "_SCT_nCountnFeature.png")
 )
 
-# Generate all nCountnFeature SpatialPlots for all sobj_GEOs
+# All sobj_GEOs SpatialPlots nCountnFeature ----
 # (straight from GEO loading in)
 # Spatial assay (raw counts)
 mclapply(
@@ -165,8 +175,174 @@ mclapply(
   assay = "SCT",
   mc.cores = cores)
 
+# sobj processing functions ----
+make_sobj <- function(sobj_GEO){
+  SpatialPlot(sobj, group.by = "SCT_cluster") # UMAP clusters not given?
+  ggsave(
+    plot = sobj
+  )
+}
+
+# Sample D_GTFB1170 ----
 # "D_GTFB1170_SmallCellOvarianCancer" is the one in the publication
-sobj <- sobj_GEO_list$D_GTFB1170_SmallCellOvarianCancer
+sobj_GEO <- sobj_GEO_list$D_GTFB1170_SmallCellOvarianCancer
+Keys(sobj_GEO)
+# Rerub generic Seurat pipeline for this sample
+# https://github.com/kwells4/visium_ovarian_cancer/tree/main/src/scripts/D_GTFB1170_SmallCellOvarianCancer
+sobj_SCT <- sobj_GEO %>% SCTransform(assay = "Spatial", new.assay.name = "SCTrr")
+sobj <- sobj_SCT
+# sobj <- readRDS("GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/sobj.rds")
+# sobj <- sobj
+## Initial processing ----
+# https://github.com/kwells4/visium_ovarian_cancer/blob/main/src/scripts/D_GTFB1170_SmallCellOvarianCancer/01_Initial_processing.R
+assay = "Spatial"
+DefaultAssay(sobj) <- assay
+RNA_nPCs = 33
+resolution = 0.5
+set.seed(0) # from GH code
+sobj <- sobj %>%
+  NormalizeData(normalization.method = "LogNormalize") %>%
+  FindVariableFeatures() %>%
+  ScaleData(vars.to.regress = NULL)%>%
+  RunPCA(assay = "Spatial", reduction.name = "pca",
+         reduction.key = paste0(assay, "PC_")) %>%
+  FindNeighbors(reduction = "pca", dims = 1:RNA_nPCs) %>%
+  FindClusters(resolution = resolution) %>%
+  RunUMAP(
+    metric = "correlation",
+    dims = 1:RNA_nPCs,
+    reduction = "pca",
+    reduction.name = "umap",
+    reduction.key = paste0(assay, "UMAP_"),
+    assay = assay
+  )
+sobj[["Spatial_cluster"]] <- Idents(sobj)
+# https://github.com/kwells4/visium_ovarian_cancer/blob/main/src/scripts/D_GTFB1170_SmallCellOvarianCancer/02_PCA_UMAP.R
+## SCT assay ----
+assay = "SCTrr"
+DefaultAssay(sobj) <- assay
+sobj <- sobj %>%
+  RunPCA(
+    assay = assay,
+    reduction.name = "sctpca",
+    reduction.key = paste0(assay, "PC_")) %>%
+  FindNeighbors(reduction = "sctpca", dims = 1:RNA_nPCs) %>%
+  FindClusters(resolution = resolution) %>%
+  RunUMAP(
+    metric = "correlation",
+    dims = 1:RNA_nPCs,
+    reduction = "sctpca",
+    reduction.name = "sctumap",
+    reduction.key = paste0(assay, "UMAP_"),
+    assay = assay
+  )
+sobj[["SCTrr_cluster"]] <- Idents(sobj)
+## SpatialPCA ----
+library(SpatialPCA)
+devtools::install_github("xzhoulab/SPARK")
+devtools::install_github('xzhoulab/SPARK')
+BiocManager::install("shangll123/SpatialPCA")
+install.packages(
+  "/Users/liaoyj/Library/CloudStorage/OneDrive-UBC/CPSC545_ProjectData/SpatialPCA-1.3.0.tar.gz",
+  type = "source")
 
-SpatialPlot(sobj, features = "SCT_cluster")
+# Overwrite RDS
+saveRDS(
+  object = sobj,
+  file = "GSE213699_mod/D_GTFB1170_SmallCellOvarianCancer/sobj.rds"
+)
+sobj <- get_sobj("D_GTFB1170_SmallCellOvarianCancer")
 
+# Visualization ----
+# View(sobj@meta.data)
+SpatialDimPlot(
+  sobj, group.by = "SCTrr_cluster",
+  label = TRUE, label.size = 3)
+
+## Spatial plot ----
+# SCT reclustering largely similar
+plt_SCTcl <- SpatialDimPlot(
+  sobj, group.by = "SCT_cluster",
+  label = TRUE, label.size = 3) +
+  labs(
+    title = "SCT Cluster - GEO"
+  )
+plt_SCTrrcl <- SpatialDimPlot(
+  sobj, group.by = "SCTrr_cluster",
+  label = TRUE, label.size = 3) +
+  labs(
+    title = "SCT Cluster - Rerun"
+  )
+
+plt_SCTcl + plt_SCTrrcl
+
+## UMAP ----
+Reductions(sobj)
+DimPlot(
+  sobj, group.by = "SCT_cluster"
+)
+
+# Plot UMAP
+sobj@meta.data$SCT_cluster <- factor(
+  sobj@meta.data$SCT_cluster,
+  levels = sort(unique(sobj@meta.data$SCT_cluster))
+)
+ggplot(
+  sobj@meta.data,
+  aes(x = UMAP_1, y = UMAP_2, color = SCT_cluster)
+) +
+  geom_point() +
+  theme_classic()
+
+DimPlot(sobj)
+
+# SingleR ----
+# https://bioconductor.org/packages/release/bioc/vignettes/SingleR/inst/doc/SingleR.html
+# https://bioconductor.org/books/devel/SingleRBook/
+library(celldex) # https://bioconductor.org/packages/3.18/data/experiment/html/celldex.html
+library(SingleR)
+library(BiocParallel)
+# https://bioconductor.org/packages/3.18/data/experiment/vignettes/celldex/inst/doc/userguide.html
+# Human Primary Cell Atlas
+hpca.se <- celldex::HumanPrimaryCellAtlasData()
+# Get numeric log-expression normalized df
+library(scRNAseq)
+sce <- Seurat::as.SingleCellExperiment(sobj, assay = "Spatial")
+colLabels(sce) <- colData(sce)$SCTrr_cluster
+# Per cell annotation
+cellanno <- SingleR::SingleR(
+  test = sce,
+  ref = hpca.se,
+  labels = hpca.se$label.main,
+  BPPARAM = MulticoreParam()
+)
+sobj[["cellanno"]] <- cellanno$labels
+# Cluster level annotation
+# https://bioconductor.org/books/devel/SingleRBook/advanced-options.html#cluster-level-annotation
+cellanno_cl <- SingleR::SingleR(
+  test = sce,
+  ref = hpca.se,
+  labels = hpca.se$label.main,
+  clusters = colData(sce)$SCTrr_cluster,
+  BPPARAM = MulticoreParam()
+)
+colData(sce)$SCTrr_cluster
+sobj[["cellanno_cl"]] <- cellanno_cl$labels
+View(sobj@meta.data)
+
+sobj <- de
+plt_spatial_ca <- SpatialPlot(
+  sobj, group.by = "cellanno_cl",
+)
+plt_spatial_ca
+Reductions(sobj)
+plt_umap_SCTrrcl <- DimPlot(
+  sobj, group.by = "SCTrr_cluster",
+  reduction = "umap"
+)
+plt_umap_SCTrrcl
+plt_umap_ca <- DimPlot(
+  sobj, group.by = "cellanno_cl",
+  reduction = "umap"
+)
+plt_umap_ca
