@@ -1,4 +1,7 @@
+*.Rproj
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+.lintr
+*.code-workspace
