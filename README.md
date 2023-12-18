@@ -9,6 +9,8 @@ Maxwell Douglas, mdouglas@bccrc.ca
 
 # Directories
 
+`CPSC545_ProjectReport`: LaTeX file for project report writeup
+
 `simulation_gland`: Scripts for simulating a glandular spatial transcriptomics structure for benchmarking
 
 `application_SCCOHT`: Scripts for applying SpatialPCA to ovarian cancer spatial transcriptomics data
