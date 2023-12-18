@@ -16,74 +16,13 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
-HCC_pathC1 <- '~/repos/CPSC545_Project/data/Control1'
-HCC_pathC2 <- '~/repos/CPSC545_Project/data/Control2/'
-HCC_pathT1 <- '~/repos/CPSC545_Project/data/Tumor1/'
-HCC_pathT2 <- '~/repos/CPSC545_Project/data/Tumor2/'
-
-#  gene.column = 2 by default and that was causing an error, update to 1 for last version with gziped
-my_object <- CreateSeuratObject(
-  counts = Read10X( data.dir = paste0(HCC_pathT1, '/filtered_feature_bc_matrix')),
-  assay = 'Spatial'
-)
-the_image <- Read10X_Image(HCC_pathT2)
-
-image <- the_image[Cells(x = my_object)]
-DefaultAssay(object = image) <- 'Spatial'
-my_object[['Slice1']] <- image
-
-plot1 <- VlnPlot(my_object, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
-plot2 <- SpatialFeaturePlot(my_object, features = "nCount_Spatial") + theme(legend.position = "right")
-wrap_plots(plot1, plot2)
 
 
-
-######## SRTsim Section
-str(exampleLIBD)
-## Set a seed for reproducible simulation
-set.seed(1)
-
-counts_hcc <- my_object@assays[["Spatial"]]@layers[["counts"]]
-rownames(counts_hcc) <- Features(my_object)
-info_hcc <- my_object@images[["Slice1"]]@coordinates
-info_hcc <- info_hcc[,c("imagecol","imagerow","tissue")]
-colnames(counts_hcc) <- rownames(info_hcc)
-colnames(info_hcc) <- c("x","y","label")
-simSRT  <- createSRT(count_in = counts_hcc, loc_in = info_hcc)
-
-## Estimate model parameters for data generation
-simSRT1 <- srtsim_fit(simSRT,sim_schem="tissue")
-## Generate synthetic data with estimated parameters
-simSRT2 <- srtsim_count(simSRT1)
-
-simSRT3 <- srtsim_fit(simSRT,sim_schem="domain")
-simSRT4 <- srtsim_count(simSRT3)
-
-simSRT2   <- compareSRT(simSRT2)
-simSRT4   <- compareSRT(simSRT4)
-
-visualize_metrics(simSRT2)
-visualize_metrics(simSRT4)
-
-# SRTsim example
-str(exampleLIBD)
-example_count   <- exampleLIBD$count
-example_loc     <- exampleLIBD$info[,c("imagecol","imagerow","layer")]
-colnames(example_loc) <- c("x","y","label")
-e_simSRT  <- createSRT(count_in=example_count,loc_in =example_loc)
-e_simSRT1 <- srtsim_fit(e_simSRT,sim_schem="tissue")
-e_simSRT2 <- srtsim_count(e_simSRT1)
-
-e_simSRT2 <- compareSRT(e_simSRT2)
-visualize_metrics(e_simSRT2)
-
-
-
-# Old tonsil stuff
-# tonsil_obj <- readRDS("~/repos/CPSC545_Project/data/spatial_transcriptomics/20220527_tonsil_atlas_spatial_seurat_obj.rds")
-# plot1 <- VlnPlot(tonsil_obj, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
-# plot2 <- SpatialFeaturePlot(tonsil_obj, features = "nCount_Spatial") + theme(legend.position = "right")
-# wrap_plots(plot1, plot2)
+#############################################
+#############################################
+#############################################
+#############################################
+################ SRTsim Part ################
 
 # To create the simulation dataset we used the UI as it provided more ability to
 # control the spatial layout of cells (at least for a new user of that package)
@@ -91,6 +30,48 @@ visualize_metrics(e_simSRT2)
 shinySRT <- SRTsim_shiny()
 simSRT <- Shiny2SRT(shinySRT)
 glandular1 <- saveRDS(simSRT, file = '~/Documents/9th_year_2023/CPSC545/term_project/data/simulated_data_1_simsrtobj.rds')
+
+
+
+
+######## SRTsim  Testing section Section
+######## Learning to use this package
+# str(exampleLIBD)
+# ## Set a seed for reproducible simulation
+# set.seed(1)
+
+# counts_hcc <- my_object@assays[["Spatial"]]@layers[["counts"]]
+# rownames(counts_hcc) <- Features(my_object)
+# info_hcc <- my_object@images[["Slice1"]]@coordinates
+# info_hcc <- info_hcc[,c("imagecol","imagerow","tissue")]
+# colnames(counts_hcc) <- rownames(info_hcc)
+# colnames(info_hcc) <- c("x","y","label")
+# simSRT  <- createSRT(count_in = counts_hcc, loc_in = info_hcc)
+
+# ## Estimate model parameters for data generation
+# simSRT1 <- srtsim_fit(simSRT,sim_schem="tissue")
+# ## Generate synthetic data with estimated parameters
+# simSRT2 <- srtsim_count(simSRT1)
+# simSRT3 <- srtsim_fit(simSRT,sim_schem="domain")
+# simSRT4 <- srtsim_count(simSRT3)
+# simSRT2   <- compareSRT(simSRT2)
+# simSRT4   <- compareSRT(simSRT4)
+# visualize_metrics(simSRT2)
+# visualize_metrics(simSRT4)
+
+# # SRTsim example
+# str(exampleLIBD)
+# example_count   <- exampleLIBD$count
+# example_loc     <- exampleLIBD$info[,c("imagecol","imagerow","layer")]
+# colnames(example_loc) <- c("x","y","label")
+# e_simSRT  <- createSRT(count_in=example_count,loc_in =example_loc)
+# e_simSRT1 <- srtsim_fit(e_simSRT,sim_schem="tissue")
+# e_simSRT2 <- srtsim_count(e_simSRT1)
+# e_simSRT2 <- compareSRT(e_simSRT2)
+# visualize_metrics(e_simSRT2)
+
+
+
 
 #############################################
 #############################################
@@ -118,6 +99,8 @@ rownames(xy_coords_red) <- colnames(glandular1_counts_red)
 groups_red <- glandular1@simcolData@listData[["group"]][mask]
 locations <- cbind(xy_coords_red, groups_red)
 
+# Attempts to modify cell-proportions post-hoc
+# Didn't work super well
 # Create SRT object out of reduced data
 # simSRT  <- createSRT(count_in=glandular1_counts_red,loc_in = locations)
 # glandular1_red_domain <- srtsim_fit(simSRT, sim_schem="domain")
@@ -377,5 +360,32 @@ ggsave(filename = '~/Documents/9th_year_2023/CPSC545/term_project/figures/LISI_p
 #   facet_wrap(~key)
 
 
+#############################################
+#############################################
+#############################################
+#############################################
+####### Abandoned analysis directions #######
 
+# HCC_pathC1 <- '~/repos/CPSC545_Project/data/Control1'
+# HCC_pathC2 <- '~/repos/CPSC545_Project/data/Control2/'
+# HCC_pathT1 <- '~/repos/CPSC545_Project/data/Tumor1/'
+# HCC_pathT2 <- '~/repos/CPSC545_Project/data/Tumor2/'
+#  gene.column = 2 by default and that was causing an error, update to 1 for last version with gziped
+# my_object <- CreateSeuratObject(
+#   counts = Read10X( data.dir = paste0(HCC_pathT1, '/filtered_feature_bc_matrix')),
+#   assay = 'Spatial'
+# )
+# the_image <- Read10X_Image(HCC_pathT2)
+# image <- the_image[Cells(x = my_object)]
+# DefaultAssay(object = image) <- 'Spatial'
+# my_object[['Slice1']] <- image
+# plot1 <- VlnPlot(my_object, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
+# plot2 <- SpatialFeaturePlot(my_object, features = "nCount_Spatial") + theme(legend.position = "right")
+# wrap_plots(plot1, plot2)
+
+# Old tonsil stuff
+# tonsil_obj <- readRDS("~/repos/CPSC545_Project/data/spatial_transcriptomics/20220527_tonsil_atlas_spatial_seurat_obj.rds")
+# plot1 <- VlnPlot(tonsil_obj, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
+# plot2 <- SpatialFeaturePlot(tonsil_obj, features = "nCount_Spatial") + theme(legend.position = "right")
+# wrap_plots(plot1, plot2)
 
