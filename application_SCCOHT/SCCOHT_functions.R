@@ -1,17 +1,23 @@
 # Libraries ----
+# Processing
 library(parallel)
 library(BiocParallel) # Parallelization
+# Wrangling
 library(data.table) # Efficient tables
 library(dplyr) # Wrangling
+# Single cell
 library(Seurat) # Single cell analysis
+library(SpatialPCA) # Spatially aware dimensional reduction
+library(celldex)
+library(scRNAseq)
+library(SingleR) # Single cell type annotation from reference
+# Visualization
 library(ggplot2) # Plotting
 library(patchwork) # Plotting as grid
-# BiocManager::install("xzhoulab/SPARK")
-# BiocManager::install("shangll123/SpatialPCA")
-library(SpatialPCA) # Spatially aware dimensional reduction
-library(celldex) # https://bioconductor.org/packages/3.18/data/experiment/html/celldex.html
-library(SingleR) # Single cell type annotation from reference
-library(scRNAseq)
+library(viridis) # Color palette
+# BiocManager::install("liaoyjruby/Rubrary")
+library(Rubrary) # Personal package of plotting scripts
+
 n_cores <- detectCores() - 2 # overcomplicated way of saying "6"
 setDTthreads(n_cores)
 
@@ -488,7 +494,12 @@ process_SingleR <- function(sample) {
 }
 
 # Find markers ----
-process_markers <- function(sample) {
+process_markers <- function(sample, pos = FALSE) {
+    if (pos) {
+        pos_str <- "_pos"
+    } else {
+        pos_str <- ""
+    }
     # BiocManager::install('immunogenomics/presto')
     dir.create(
         paste0(dir_data, sample, "/Markers/"), showWarnings = FALSE)
@@ -499,26 +510,26 @@ process_markers <- function(sample) {
     # SCTrr cluster markers
     message("* SCTrr cluster markers")
     Idents(sobj) <- "SCTrr_cluster"
-    mrkrs_SCTrr <- FindAllMarkers(sobj, only.pos = TRUE)
+    mrkrs_SCTrr <- FindAllMarkers(sobj, only.pos = pos)
     Rubrary::rwrite(
         mrkrs_SCTrr,
-        paste0(dir_data, sample, "/Markers/clSCTrr_mrkrs.tsv")
+        paste0(dir_data, sample, "/Markers/clSCTrr_mrkrs", pos_str, ".tsv")
     )
     # SPARK cluster markers
     message("* SPARK cluster markers")
     Idents(sobj) <- "spcaspark_clusters"
-    mrkrs_SPARK <- FindAllMarkers(sobj, only.pos = TRUE)
+    mrkrs_SPARK <- FindAllMarkers(sobj, only.pos = pos)
     Rubrary::rwrite(
         mrkrs_SPARK,
-        paste0(dir_data, sample, "/Markers/clSPARK_mrkrs.tsv")
+        paste0(dir_data, sample, "/Markers/clSPARK_mrkrs", pos_str, ".tsv")
     )
     # SVF cluster markers
     message("* SVF cluster markers")
     Idents(sobj) <- "spcacustom_clusters"
-    mrkrs_SVF <- FindAllMarkers(sobj, only.pos = TRUE)
+    mrkrs_SVF <- FindAllMarkers(sobj, only.pos = pos)
     Rubrary::rwrite(
         mrkrs_SVF,
-        paste0(dir_data, sample, "/Markers/clSVF_mrkrs.tsv")
+        paste0(dir_data, sample, "/Markers/clSVF_mrkrs", pos_str, ".tsv")
     )
     return(list(
         SCTrr = mrkrs_SCTrr,
@@ -528,6 +539,54 @@ process_markers <- function(sample) {
 }
 
 # Visualization ----
+# Plot UMAP expression & violin expression
+plot_exp <- function(goi, sobj, reduction, ident) {
+    umap_exp <- FeaturePlot(
+        sobj,
+        features = goi,
+        reduction = reduction
+    ) +
+    viridis::scale_color_viridis(option = "magma")
+
+    DefaultAssay(sobj)
+    Idents(sobj) <- ident
+    vln_exp <- VlnPlot(
+        sobj,
+        features = goi,
+        layer = "data",
+        assay = "Spatial",
+        pt.size = 0
+    ) +
+        stat_summary(
+            fun = "median",
+            geom = "point",
+            color = "black",
+            size = 3
+        ) +
+        xlab("Cluster") +
+        labs(title = NULL) +
+        theme(legend.position = "none")
+    pw <- (umap_exp | vln_exp) +
+        plot_annotation(title = goi)
+    return(pw)
+}
+
+# Plot spatial expression
+plot_exp_spatial <- function(gois, sobj) {
+    plts <- lapply(
+        gois,
+        function(goi) {
+            SpatialPlot(
+                sobj,
+                features = goi
+            ) + viridis::scale_fill_viridis(option = "magma")
+        }
+    )
+    pw <- wrap_plots(plts, ncol = 2)
+    return(pw)
+}
+
+
 # function to spit out nCount_Spatial + nFeature_Spatial spatial tissue plots
 plot_SpatialPlot <- function(
     sobj, feats, assay = "SCT", savename = NULL, width = 12, height = 6) {
